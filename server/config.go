@@ -106,7 +106,7 @@ func SetDefaults(config *Config) error {
 		config.RCacheTtl = RCacheTtl
 	}
 	if config.Ndots <= 0 {
-		config.Ndots = 1
+		config.Ndots = 2
 	}
 
 	if len(config.Nameservers) == 0 {
