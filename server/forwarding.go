@@ -72,7 +72,7 @@ Redo:
 		goto Redo
 	}
 
-	logf("failure to forward request %q", err)
+	logf("failure to forward request '%s' with err %v ", err, req.Question[0].Name)
 	m := new(dns.Msg)
 	m.SetReply(req)
 	m.SetRcode(req, dns.RcodeServerFailure)

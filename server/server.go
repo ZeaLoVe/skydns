@@ -187,6 +187,7 @@ func (s *server) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
 		w.WriteMsg(m)
 
 		promErrorCount.WithLabelValues("refused").Inc()
+		logf("request of domain %s was refused", req.Question[0].Name)
 		return
 	}
 
