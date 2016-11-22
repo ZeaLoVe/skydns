@@ -100,6 +100,11 @@ func init() {
 	flag.IntVar(&config.Ndots, "ndots", intEnv("SKYDNS_NDOTS", server.Ndots), "How many labels a name should have before we allow forwarding")
 
 	flag.StringVar(&msg.PathPrefix, "path-prefix", env("SKYDNS_PATH_PREFIX", "skydns"), "backend(etcd) path prefix, default: skydns")
+
+	// HttpDns
+	flag.BoolVar(&config.HttpDns, "httpdns", false, "http dns support, default: false")
+	flag.StringVar(&config.HttpDnsAddr, "httpdnsaddr", "127.0.0.1:8053", "http dns addr,default 127.0.0.1:8053")
+	flag.StringVar(&config.RegionDB, "regiondb", "./data/ip2region.db", "ip to region db path, default ./data/ip2region.db")
 }
 
 func main() {
@@ -131,6 +136,7 @@ func main() {
 	if err := loadConfig(client, config); err != nil {
 		log.Fatalf("skydns: %s", err)
 	}
+
 	if err := server.SetDefaults(config); err != nil {
 		log.Fatalf("skydns: defaults could not be set from /etc/resolv.conf: %v", err)
 	}

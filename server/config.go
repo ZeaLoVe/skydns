@@ -73,6 +73,10 @@ type Config struct {
 	localDomain string // "local.dns." + config.Domain
 	dnsDomain   string // "ns.dns". + config.Domain
 
+	HttpDns     bool   // enable http dns
+	HttpDnsAddr string //http dns listen address, default 127.0.0.1:8053
+	RegionDB    string //ip to region db path, default ./data/ip2region.db
+
 	// Stub zones support. Pointer to a map that we refresh when we see
 	// an update. Map contains domainname -> nameserver:port
 	stub *map[string][]string
@@ -91,6 +95,10 @@ func SetDefaults(config *Config) error {
 	if config.Hostmaster == "" {
 		config.Hostmaster = appendDomain("hostmaster", config.Domain)
 	}
+	if config.HttpDnsAddr == "" {
+		config.HttpDnsAddr = "127.0.0.1:8053"
+	}
+
 	// People probably don't know that SOA's email addresses cannot
 	// contain @-signs, replace them with dots
 	config.Hostmaster = dns.Fqdn(strings.Replace(config.Hostmaster, "@", ".", -1))

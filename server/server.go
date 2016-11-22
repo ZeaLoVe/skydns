@@ -22,7 +22,8 @@ import (
 	"github.com/miekg/dns"
 )
 
-const Version = "2.5.3a"
+/*sdp version from origin 2.5.3a*/
+const Version = "sdp_2.5.3a"
 
 type server struct {
 	backend Backend
@@ -115,6 +116,18 @@ func (s *server) Run() error {
 			}
 		}()
 		dnsReadyMsg(s.config.DnsAddr, "udp")
+	}
+
+	// Set httpdns
+	if s.config.HttpDns {
+		s.group.Add(1)
+		go func() {
+			defer s.group.Done()
+			if err := s.StartHttp(s.config.HttpDnsAddr, s.config.RegionDB); err != nil {
+				fatalf("%s", err)
+			}
+		}()
+		dnsReadyMsg(s.config.HttpDnsAddr, "http")
 	}
 
 	s.group.Wait()
