@@ -6,6 +6,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -16,6 +17,42 @@ import (
 	"github.com/miekg/dns"
 	"github.com/mohong122/ip2region/binding/golang"
 	"github.com/skynetservices/skydns/cache"
+)
+
+var RELOADINTERVAL = 2
+
+func reloadRegionFile(filename string) (*ip2region.Ip2Region, error) {
+	ok, err := checkModify(filename)
+	if err != nil {
+		return nil, err
+	} else {
+		if !ok {
+			return nil, fmt.Errorf("File not changed recently")
+		} else {
+			return ip2region.New(filename)
+		}
+	}
+}
+
+func checkModify(filename string) (bool, error) {
+	if fi, err := os.Stat(filename); err != nil {
+		return false, err
+	} else {
+		if time.Since(fi.ModTime()).Minutes() < float64(RELOADINTERVAL) {
+			return true, nil
+		} else {
+			return false, nil
+		}
+	}
+}
+
+const (
+	INIT         = iota //0
+	NOTMATCH            //1
+	CANBEMATCH          //2
+	MOREMATCH           //3
+	FARMOREMATCH        //4
+	BESTMATCH           //5
 )
 
 // use this to call dns resolv function
@@ -32,20 +69,75 @@ type SortableInfos struct {
 	SortList    []SortInfo
 }
 
-func distance(src, comp ip2region.IpInfo) int {
-	if comp.Country == src.Country {
-		if comp.Country == "中国" {
-			if comp.ISP == "0" || src.ISP == "0" {
-				return 2
-			}
-			if comp.ISP == src.ISP {
-				return 5
-			}
-		}
-		return 2
+/*
+use cityId to route
+< 100     : "aws新加坡"
+100 - 199 : "aws美国加州"
+200 - 299 : "aws美洲"
+300 - 399 : "aws欧洲"
+400 - 499 : "aws印度"
+500 - 599 : "aws非洲"
+600 - 699 : "aws中亚"
+*/
+func getZone(id int64) string {
+	if id < 100 {
+		return "aws新加坡"
+	} else if id > 100 && id <= 199 {
+		return "aws美国加州"
+	} else if id > 200 && id <= 299 {
+		return "aws美国加州"
+	} else if id > 300 && id <= 399 {
+		return "aws欧洲"
+	} else if id > 400 && id <= 499 {
+		return "aws印度"
+	} else if id > 500 && id <= 599 {
+		return "aws非洲"
+	} else if id > 600 && id <= 699 {
+		return "aws中亚"
 	} else {
-		return 1
+		return "none"
 	}
+}
+
+func distance(src, comp ip2region.IpInfo) int {
+	if comp.CityId == src.CityId {
+		//中国 及 内网及未分配
+		if comp.CityId == 0 {
+			if comp.Country == "中国" && src.Country == "中国" {
+				if comp.ISP == "0" || src.ISP == "0" {
+					return FARMOREMATCH
+				}
+				if comp.ISP == src.ISP {
+					return BESTMATCH
+				}
+			} else if comp.Country == src.Country {
+				if strings.Contains(comp.Country, "192") || strings.Contains(comp.Country, "172") {
+					return BESTMATCH
+				} else if strings.Contains(comp.Country, "10") {
+					return BESTMATCH
+				} else {
+					return NOTMATCH
+				}
+			} else {
+				return NOTMATCH
+			}
+		} else {
+			//同一个国家
+			return BESTMATCH
+		}
+	} else {
+		if (comp.CityId / 100) == (src.CityId / 100) {
+			//不相关区域
+			if comp.CityId == 0 || src.CityId == 0 {
+				return CANBEMATCH
+			}
+			//同一个区域
+			return BESTMATCH
+		} else {
+			return CANBEMATCH
+		}
+	}
+	return NOTMATCH
 }
 
 // sort by distance desc
@@ -53,16 +145,16 @@ func (infos SortableInfos) Less(i, j int) bool {
 	if g_regions == nil {
 		return true
 	}
-	if infos.SortList[i].Distance == 0 {
+	if infos.SortList[i].Distance == INIT {
 		if ipinfo, err := g_regions.MemorySearch(infos.SortList[i].Ip); err != nil {
-			infos.SortList[i].Distance = 1
+			infos.SortList[i].Distance = NOTMATCH
 		} else {
 			infos.SortList[i].Distance = distance(ipinfo, infos.CompareInfo)
 		}
 	}
-	if infos.SortList[j].Distance == 0 {
+	if infos.SortList[j].Distance == INIT {
 		if ipinfo, err := g_regions.MemorySearch(infos.SortList[j].Ip); err != nil {
-			infos.SortList[j].Distance = 1
+			infos.SortList[j].Distance = NOTMATCH
 		} else {
 			infos.SortList[j].Distance = distance(ipinfo, infos.CompareInfo)
 		}
@@ -112,12 +204,20 @@ func configHttpDns() {
 		w.Write([]byte("ok\n"))
 	})
 
-	http.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("servers\n"))
+	http.HandleFunc("/regions", func(w http.ResponseWriter, r *http.Request) {
+		ip := r.FormValue("ip")
+		if ip == "" {
+			ip = r.RemoteAddr
+		}
+
+		ipinfo, _ := g_regions.MemorySearch(ip)
+		output := fmt.Sprintf("%v", ipinfo)
+		w.Write([]byte(output))
 	})
 
-	http.HandleFunc("/ip2region/reload", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("reload\n"))
+	/*read hosts from config,path:/v2/keys/skydns/config/hosts*/
+	http.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/n?host=skydns.hosts", 302)
 	})
 
 	http.HandleFunc("/n", func(w http.ResponseWriter, r *http.Request) {
@@ -134,9 +234,6 @@ func configHttpDns() {
 		if ip == "" {
 			ip = r.RemoteAddr
 		}
-
-		ipinfo, _ := g_regions.MemorySearch(ip)
-		logf("ipinfo: %v", ipinfo)
 
 		m := new(dns.Msg)
 		m.Question = append(m.Question, dns.Question{resp.Host, dns.TypeA, dns.ClassINET})
@@ -166,7 +263,7 @@ func configHttpDns() {
 			}
 			m.Answer = append(m.Answer, records...)
 			if len(m.Answer) != 0 {
-				logf("cache insert")
+				logf("cache miss, insert answer")
 				g_server.rcache.InsertMessage(cache.Key(q, dnssec, tcp), m)
 			}
 		}
@@ -190,6 +287,8 @@ func configHttpDns() {
 
 		//sort by region infos
 		if g_regions != nil {
+			ipinfo, _ := g_regions.MemorySearch(ip)
+			logf("request from: %v", ipinfo)
 			var infos SortableInfos
 			infos.CompareInfo = ipinfo
 			for _, ip := range ips {
@@ -242,6 +341,16 @@ func (s *server) StartHttp(addr string, regiondb string) error {
 		logf("load region2ip db error:%v", err.Error())
 	} else {
 		g_regions = regions
+		go func() {
+			for {
+				time.Sleep(time.Duration(RELOADINTERVAL) * time.Minute)
+				new_regions, err := reloadRegionFile(regiondb)
+				if err == nil {
+					g_regions = new_regions
+					logf("reload region file success")
+				}
+			}
+		}()
 	}
 
 	if err := httpserver.ListenAndServe(); err != nil {
