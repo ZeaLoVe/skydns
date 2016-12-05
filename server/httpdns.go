@@ -19,7 +19,7 @@ import (
 	"github.com/skynetservices/skydns/cache"
 )
 
-var RELOADINTERVAL = 2
+var RELOADINTERVAL = 60 * 24
 
 func reloadRegionFile(filename string) (*ip2region.Ip2Region, error) {
 	ok, err := checkModify(filename)
@@ -110,6 +110,7 @@ func distance(src, comp ip2region.IpInfo) int {
 				if comp.ISP == src.ISP {
 					return BESTMATCH
 				}
+				return FARMOREMATCH
 			} else if comp.Country == src.Country {
 				if strings.Contains(comp.Country, "192") || strings.Contains(comp.Country, "172") {
 					return BESTMATCH
