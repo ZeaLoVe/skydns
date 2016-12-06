@@ -40,6 +40,7 @@ var (
 	Rec     System = "recursive"
 	Reverse System = "reverse"
 	Stub    System = "stub"
+	Httpdns System = "httpdns"
 
 	Nxdomain  Cause = "nxdomain"
 	Nodata    Cause = "nodata"

@@ -17,6 +17,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/mohong122/ip2region/binding/golang"
 	"github.com/skynetservices/skydns/cache"
+	"github.com/skynetservices/skydns/metrics"
 )
 
 var RELOADINTERVAL = 60 * 24
@@ -47,98 +48,72 @@ func checkModify(filename string) (bool, error) {
 }
 
 const (
-	INIT         = iota //0
-	NOTMATCH            //1
-	CANBEMATCH          //2
-	MOREMATCH           //3
-	FARMOREMATCH        //4
-	BESTMATCH           //5
+	INIT              = 0
+	NOTMATCH          = 1
+	BESTMATCH         = 6666
+	INNERNET_192      = 1000
+	INNERNET_172      = 1001
+	INNERNET_10       = 1002
+	IPUNKNOWN         = 1003
+	GLOBALAWSSINGAPOL = 1010
+	GLOBALAWSCA       = 1011
+	GLOBALAMERICA     = 1012
+	GLOBALAWSEUROP    = 1013
+	GLOBALAWSINDIA    = 1014
+	GLOBALAWSAFRICA   = 1015
+	GLOBALAWSMIDASIA  = 1016
+	GLOBALOTHERS      = 1017
+	CHINATEL          = 1110
+	CHINAUNION        = 1109
+	CHINAMOBILE       = 1108
+	CHINAOTHERS       = 1107
 )
 
 // use this to call dns resolv function
 var g_server *server
 var g_regions *ip2region.Ip2Region
 
-type SortInfo struct {
+type SortableIpInfo struct {
 	Distance int
 	Ip       string
 }
 
 type SortableInfos struct {
-	CompareInfo ip2region.IpInfo //region info of source ip
-	SortList    []SortInfo
+	CompareType int //request ip region type
+	SortList    []SortableIpInfo
 }
 
-/*
-use cityId to route
-< 100     : "aws新加坡"
-100 - 199 : "aws美国加州"
-200 - 299 : "aws美洲"
-300 - 399 : "aws欧洲"
-400 - 499 : "aws印度"
-500 - 599 : "aws非洲"
-600 - 699 : "aws中亚"
-*/
-func getZone(id int64) string {
-	if id < 100 {
-		return "aws新加坡"
-	} else if id > 100 && id <= 199 {
-		return "aws美国加州"
-	} else if id > 200 && id <= 299 {
-		return "aws美国加州"
-	} else if id > 300 && id <= 399 {
-		return "aws欧洲"
-	} else if id > 400 && id <= 499 {
-		return "aws印度"
-	} else if id > 500 && id <= 599 {
-		return "aws非洲"
-	} else if id > 600 && id <= 699 {
-		return "aws中亚"
-	} else {
-		return "none"
-	}
-}
-
-func distance(src, comp ip2region.IpInfo) int {
-	if comp.CityId == src.CityId {
-		//中国 及 内网及未分配
-		if comp.CityId == 0 {
-			if comp.Country == "中国" && src.Country == "中国" {
-				if comp.ISP == "0" || src.ISP == "0" {
-					return FARMOREMATCH
-				}
-				if comp.ISP == src.ISP {
-					return BESTMATCH
-				}
-				return FARMOREMATCH
-			} else if comp.Country == src.Country {
-				if strings.Contains(comp.Country, "192") || strings.Contains(comp.Country, "172") {
-					return BESTMATCH
-				} else if strings.Contains(comp.Country, "10") {
-					return BESTMATCH
-				} else {
-					return NOTMATCH
-				}
+func getRegionType(ipinfo ip2region.IpInfo) int {
+	if ipinfo.CityId == 0 {
+		if ipinfo.Country == "中国" {
+			if ipinfo.ISP == "电信" {
+				return CHINATEL
+			} else if ipinfo.ISP == "联通" {
+				return CHINAUNION
+			} else if ipinfo.ISP == "移动" {
+				return CHINAMOBILE
 			} else {
-				return NOTMATCH
+				return CHINAOTHERS
 			}
+		} else if strings.Contains(ipinfo.Country, "192") {
+			return INNERNET_192
+		} else if strings.Contains(ipinfo.Country, "172") {
+			return INNERNET_172
+		} else if strings.Contains(ipinfo.Country, "10") {
+			return INNERNET_10
 		} else {
-			//同一个国家
-			return BESTMATCH
-		}
-	} else {
-		if (comp.CityId / 100) == (src.CityId / 100) {
-			//不相关区域
-			if comp.CityId == 0 || src.CityId == 0 {
-				return CANBEMATCH
-			}
-			//同一个区域
-			return BESTMATCH
-		} else {
-			return CANBEMATCH
+			return IPUNKNOWN
 		}
 	}
-	return NOTMATCH
+	return GLOBALAWSSINGAPOL + int(ipinfo.CityId/100)
+}
+
+func distance(src, comp int) int {
+	if comp == src && comp != IPUNKNOWN {
+		return BESTMATCH
+	} else {
+		return src
+	}
 }
 
 // sort by distance desc
@@ -150,14 +125,14 @@ func (infos SortableInfos) Less(i, j int) bool {
 		if ipinfo, err := g_regions.MemorySearch(infos.SortList[i].Ip); err != nil {
 			infos.SortList[i].Distance = NOTMATCH
 		} else {
-			infos.SortList[i].Distance = distance(ipinfo, infos.CompareInfo)
+			infos.SortList[i].Distance = distance(getRegionType(ipinfo), infos.CompareType)
 		}
 	}
 	if infos.SortList[j].Distance == INIT {
 		if ipinfo, err := g_regions.MemorySearch(infos.SortList[j].Ip); err != nil {
 			infos.SortList[j].Distance = NOTMATCH
 		} else {
-			infos.SortList[j].Distance = distance(ipinfo, infos.CompareInfo)
+			infos.SortList[j].Distance = distance(getRegionType(ipinfo), infos.CompareType)
 		}
 	}
 
@@ -169,7 +144,7 @@ func (infos SortableInfos) Less(i, j int) bool {
 }
 
 func (infos SortableInfos) Swap(i, j int) {
-	var tmp SortInfo = infos.SortList[i]
+	var tmp SortableIpInfo = infos.SortList[i]
 	infos.SortList[i] = infos.SortList[j]
 	infos.SortList[j] = tmp
 }
@@ -216,7 +191,7 @@ func configHttpDns() {
 		w.Write([]byte(output))
 	})
 
-	/*read hosts from config,path:/v2/keys/skydns/config/hosts*/
+	/*read hosts from config,path:/v2/keys/skydns/hosts/skydns */
 	http.HandleFunc("/servers", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/n?host=skydns.hosts", 302)
 	})
@@ -229,6 +204,7 @@ func configHttpDns() {
 			msg := NewDto()
 			msg.Code = "SKYDNS/HOST_MISS"
 			msg.Message = "Please enter host in url arguments, like host=XXX"
+			metrics.ReportErrorCount(nil, metrics.Httpdns)
 			RenderJson(w, msg)
 			return
 		}
@@ -244,7 +220,7 @@ func configHttpDns() {
 		dnssec := false
 		tcp := false
 		bufsize := uint16(512)
-		//		start := time.Now() // record time
+		start := time.Now() // record time
 
 		q := m.Question[0]
 		name := strings.ToLower(resp.Host)
@@ -259,6 +235,7 @@ func configHttpDns() {
 			//not hit
 			records, err := g_server.AddressRecords(q, name, nil, bufsize, dnssec, false)
 			if isEtcdNameError(err, g_server) {
+				metrics.ReportErrorCount(nil, metrics.Httpdns)
 				RenderJson(w, resp)
 				return
 			}
@@ -271,6 +248,8 @@ func configHttpDns() {
 
 		if len(m.Answer) == 0 { // NODATA response
 			RenderJson(w, resp)
+			metrics.ReportDuration(nil, start, metrics.Httpdns)
+			metrics.ReportRequestCount(nil, metrics.Httpdns)
 			return
 		}
 
@@ -291,9 +270,9 @@ func configHttpDns() {
 			ipinfo, _ := g_regions.MemorySearch(ip)
 			logf("request from: %v", ipinfo)
 			var infos SortableInfos
-			infos.CompareInfo = ipinfo
+			infos.CompareType = getRegionType(ipinfo)
 			for _, ip := range ips {
-				var info SortInfo
+				var info SortableIpInfo
 				info.Ip = ip
 				infos.SortList = append(infos.SortList, info)
 			}
@@ -304,6 +283,8 @@ func configHttpDns() {
 		}
 
 		resp.Ips = ips
+		metrics.ReportDuration(nil, start, metrics.Httpdns)
+		metrics.ReportRequestCount(nil, metrics.Httpdns)
 		RenderJson(w, resp)
 	})
 }
