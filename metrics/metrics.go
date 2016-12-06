@@ -48,6 +48,7 @@ var (
 	Refused   Cause = "refused"
 	Overflow  Cause = "overflow"
 	Fail      Cause = "servfail"
+	NoHost    Cause = "nohost"
 
 	Response  CacheType = "response"
 	Signature CacheType = "signature"
@@ -184,4 +185,20 @@ func envOrDefault(env, def string) string {
 		return e
 	}
 	return def
+}
+
+func ReportHttpErrorCount(cause Cause, sys System) {
+	if errorCount == nil {
+		return
+	}
+	errorCount.WithLabelValues(string(sys), string(cause)).Inc()
+}
+
+func ReportDurationWithSize(size float64, start time.Time, sys System) {
+	if requestDuration == nil || responseSize == nil {
+		return
+	}
+
+	requestDuration.WithLabelValues(string(sys)).Observe(float64(time.Since(start)) / float64(time.Second))
+	responseSize.WithLabelValues(string(sys)).Observe(size)
 }

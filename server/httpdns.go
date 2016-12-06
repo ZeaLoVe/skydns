@@ -5,6 +5,7 @@
 package server
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -204,7 +205,7 @@ func configHttpDns() {
 			msg := NewDto()
 			msg.Code = "SKYDNS/HOST_MISS"
 			msg.Message = "Please enter host in url arguments, like host=XXX"
-			metrics.ReportErrorCount(nil, metrics.Httpdns)
+			metrics.ReportHttpErrorCount(metrics.NoHost, metrics.Httpdns)
 			RenderJson(w, msg)
 			return
 		}
@@ -235,7 +236,7 @@ func configHttpDns() {
 			//not hit
 			records, err := g_server.AddressRecords(q, name, nil, bufsize, dnssec, false)
 			if isEtcdNameError(err, g_server) {
-				metrics.ReportErrorCount(nil, metrics.Httpdns)
+				metrics.ReportHttpErrorCount(metrics.Nodata, metrics.Httpdns)
 				RenderJson(w, resp)
 				return
 			}
@@ -248,7 +249,7 @@ func configHttpDns() {
 
 		if len(m.Answer) == 0 { // NODATA response
 			RenderJson(w, resp)
-			metrics.ReportDuration(nil, start, metrics.Httpdns)
+			metrics.ReportDurationWithSize(float64(binary.Size(resp)), start, metrics.Httpdns)
 			metrics.ReportRequestCount(nil, metrics.Httpdns)
 			return
 		}
@@ -283,9 +284,9 @@ func configHttpDns() {
 		}
 
 		resp.Ips = ips
-		metrics.ReportDuration(nil, start, metrics.Httpdns)
-		metrics.ReportRequestCount(nil, metrics.Httpdns)
 		RenderJson(w, resp)
+		metrics.ReportDurationWithSize(float64(binary.Size(resp)), start, metrics.Httpdns)
+		metrics.ReportRequestCount(nil, metrics.Httpdns)
 	})
 }
 
