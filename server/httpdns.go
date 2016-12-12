@@ -5,7 +5,6 @@
 package server
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,7 +20,7 @@ import (
 	"github.com/skynetservices/skydns/metrics"
 )
 
-var RELOADINTERVAL = 60 * 24
+var RELOADINTERVAL = 60
 
 func reloadRegionFile(filename string) (*ip2region.Ip2Region, error) {
 	ok, err := checkModify(filename)
@@ -160,6 +159,13 @@ type HttpDnsResult struct {
 	Ips  []string `json:"ips"`
 }
 
+func (resp HttpDnsResult) Len() int {
+	if res, err := json.Marshal(resp); err == nil {
+		return len(res)
+	}
+	return 0
+}
+
 type Dto struct {
 	Code        string `json:"code"`
 	Message     string `json:"message"`
@@ -204,7 +210,7 @@ func configHttpDns() {
 		if resp.Host == "" {
 			msg := NewDto()
 			msg.Code = "SKYDNS/HOST_MISS"
-			msg.Message = "Please enter host in url arguments, like host=XXX"
+			msg.Message = "Host name is miss, enter host=XXX in params."
 			metrics.ReportHttpErrorCount(metrics.NoHost, metrics.Httpdns)
 			RenderJson(w, msg)
 			return
@@ -221,16 +227,16 @@ func configHttpDns() {
 		dnssec := false
 		tcp := false
 		bufsize := uint16(512)
-		start := time.Now() // record time
+		start := time.Now()
 
 		q := m.Question[0]
 		name := strings.ToLower(resp.Host)
+		metrics.ReportRequestCount(nil, metrics.System(name)) //domain statistic
 
 		// Check cache first.
 		m1 := g_server.rcache.Hit(q, dnssec, tcp, m.Id)
 		if m1 != nil {
 			//hit
-			logf("cache hit")
 			m = m1
 		} else {
 			//not hit
@@ -242,14 +248,13 @@ func configHttpDns() {
 			}
 			m.Answer = append(m.Answer, records...)
 			if len(m.Answer) != 0 {
-				logf("cache miss, insert answer")
 				g_server.rcache.InsertMessage(cache.Key(q, dnssec, tcp), m)
 			}
 		}
 
 		if len(m.Answer) == 0 { // NODATA response
 			RenderJson(w, resp)
-			metrics.ReportDurationWithSize(float64(binary.Size(resp)), start, metrics.Httpdns)
+			metrics.ReportDurationWithSize(float64(resp.Len()), start, metrics.Httpdns)
 			metrics.ReportRequestCount(nil, metrics.Httpdns)
 			return
 		}
@@ -259,7 +264,6 @@ func configHttpDns() {
 		for _, answer := range m.Answer {
 			res := answer.String()
 			date_len := len(answer.Header().String())
-			//			logf("date len: %v , total len:%v", date_len, length)
 			ips = append(ips, res[date_len:])
 			if resp.Ttl > answer.Header().Ttl {
 				resp.Ttl = answer.Header().Ttl
@@ -269,7 +273,6 @@ func configHttpDns() {
 		//sort by region infos
 		if g_regions != nil {
 			ipinfo, _ := g_regions.MemorySearch(ip)
-			logf("request from: %v", ipinfo)
 			var infos SortableInfos
 			infos.CompareType = getRegionType(ipinfo)
 			for _, ip := range ips {
@@ -285,7 +288,7 @@ func configHttpDns() {
 
 		resp.Ips = ips
 		RenderJson(w, resp)
-		metrics.ReportDurationWithSize(float64(binary.Size(resp)), start, metrics.Httpdns)
+		metrics.ReportDurationWithSize(float64(resp.Len()), start, metrics.Httpdns)
 		metrics.ReportRequestCount(nil, metrics.Httpdns)
 	})
 }
